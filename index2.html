@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Uang Kas Kelas</title>
+  <style>
+    body { font-family: Arial; padding: 15px; background: #f2f2f2; }
+    .card { background: #fff; padding: 15px; border-radius: 10px; margin-bottom: 15px; }
+    button { padding: 7px 10px; border: none; border-radius: 5px; background: #007bff; color: #fff; }
+    button:disabled { background: #888; }
+    .danger { background: red; }
+    .ghost { background: #ccc; color: #000; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border: 1px solid #ddd; padding: 6px; }
+    th { background: #eee; }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <h2>Uang Kas Kelas</h2>
+  <p id="modStatus">Mode: Siswa (Hanya melihat)</p>
+  <input type="password" id="modPassInput" placeholder="Password Moderator">
+  <button id="loginMod">Login Moderator</button>
+  <button id="logoutMod" style="display:none;" class="ghost">Logout</button>
+</div>
+
+<div class="card">
+  <h3>Tambah Anggota</h3>
+  <input id="memberName" placeholder="Nama anggota">
+  <button id="addMemberBtn">Tambah</button>
+</div>
+
+<div class="card">
+  <h3>Daftar Anggota</h3>
+  <div id="membersList"></div>
+</div>
+
+<div class="card">
+  <h3>Catatan Kas</h3>
+  <select id="txType">
+    <option value="in">Pemasukan</option>
+    <option value="out">Pengeluaran</option>
+  </select>
+  <input id="txAmount" type="number" placeholder="Jumlah">
+  <select id="txMember"></select>
+  <!-- TAMBAH INPUT TANGGAL DI SINI -->
+  <input id="txDate" type="date">
+  <input id="txNote" placeholder="Catatan (opsional)">
+  <button id="addTxBtn">Tambahkan</button>
+</div>
+
+<div class="card">
+  <h3>Daftar Transaksi</h3>
+  <table>
+    <thead>
+      <tr><th>Tanggal</th><th>Nama</th><th>Jenis</th><th>Jumlah</th><th>Catatan</th><th>Aksi</th></tr>
+    </thead>
+    <tbody id="txTable"></tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Total Keseluruhan</h3>
+  <div id="totalAllBox"></div>
+</div>
+
+<div class="card">
+  <h3>Laporan Bulanan</h3>
+  <label>Dari:</label>
+  <input type="date" id="filterStart">
+  <label>Sampai:</label>
+  <input type="date" id="filterEnd">
+  <button id="filterBtn">Terapkan</button>
+
+  <div id="reportResult" style="margin-top:10px;"></div>
+</div>
+
+<script>
+// -------------------- STORAGE ----------------------
+let members = JSON.parse(localStorage.getItem("members") || "[]");
+let txs = JSON.parse(localStorage.getItem("txs") || "[]");
+
+function save() {
+  localStorage.setItem("members", JSON.stringify(members));
+  localStorage.setItem("txs", JSON.stringify(txs));
+}
+
+// -------------------- MODERATOR ----------------------
+let isMod = false;
+const MOD_PASS = "98912";
+
+function updateModUI() {
+  const dis = !isMod;
+
+  document.getElementById("addMemberBtn").disabled = dis;
+  document.getElementById("memberName").disabled = dis;
+
+  document.getElementById("addTxBtn").disabled = dis;
+  document.getElementById("txType").disabled = dis;
+  document.getElementById("txAmount").disabled = dis;
+  document.getElementById("txMember").disabled = dis;
+  document.getElementById("txDate").disabled = dis;
+  document.getElementById("txNote").disabled = dis;
+
+  document.querySelectorAll("#membersList button").forEach(b=>b.disabled = dis);
+  document.querySelectorAll("#txTable button").forEach(b=>b.disabled = dis);
+
+  document.getElementById("logoutMod").style.display = isMod ? "inline-block" : "none";
+  document.getElementById("modStatus").textContent = isMod ?
+    "Mode: Moderator (Akses penuh)" :
+    "Mode: Siswa (Hanya melihat)";
+}
+
+document.getElementById("loginMod").addEventListener("click", () => {
+  const p = document.getElementById("modPassInput").value;
+  if (p === MOD_PASS) {
+    isMod = true;
+    updateModUI();
+    alert("Login moderator berhasil.");
+  } else alert("Yah Dongo salah pw 🤭.");
+});
+
+document.getElementById("logoutMod").addEventListener("click", () => {
+  isMod = false;
+  updateModUI();
+});
+
+// -------------------- RENDER ANGGOTA ----------------------
+function renderMembers() {
+  const box = document.getElementById("membersList");
+  box.innerHTML = "";
+
+  members.forEach(m => {
+    const row = document.createElement("div");
+    row.innerHTML = `
+      ${m.name}
+      <button onclick="delMember('${m.id}')" class="danger" style="float:right;">Hapus</button>
+      <div style="clear:both"></div>
+    `;
+    box.appendChild(row);
+  });
+
+  const sel = document.getElementById("txMember");
+  sel.innerHTML = members.map(m => `<option value="${m.id}">${m.name}</option>`).join("");
+}
+
+// -------------------- TAMBAH ANGGOTA ----------------------
+function addMember() {
+  if (!isMod) return alert("Khusus moderator!");
+
+  const name = document.getElementById("memberName").value.trim();
+  if (!name) return;
+
+  members.push({ id: "m" + Date.now(), name });
+  save();
+  renderMembers();
+  document.getElementById("memberName").value = "";
+}
+
+document.getElementById("addMemberBtn").onclick = addMember;
+
+// -------------------- HAPUS ANGGOTA ----------------------
+function delMember(id) {
+  if (!isMod) return alert("Khusus moderator!");
+
+  members = members.filter(m => m.id !== id);
+  txs = txs.filter(t => t.member !== id);
+  save();
+  renderMembers();
+  renderTx();
+  renderTotalAll();
+}
+
+// -------------------- TRANSAKSI ----------------------
+function renderTx() {
+  const tbody = document.getElementById("txTable");
+  tbody.innerHTML = "";
+
+  txs.forEach(t => {
+    const m = members.find(x => x.id === t.member);
+    const row = document.createElement("tr");
+
+    // Format tanggal dari input date (YYYY-MM-DD) ke DD/MM/YYYY
+    const dateParts = t.date.split('-');
+    const formattedDate = `${dateParts[2]}/${dateParts[1]}/${dateParts[0]}`;
+
+    row.innerHTML = `
+      <td>${formattedDate}</td>
+      <td>${m ? m.name : "-"}</td>
+      <td>${t.type === "in" ? "Masuk" : "Keluar"}</td>
+      <td>Rp ${t.amount}</td>
+      <td>${t.note || "-"}</td>
+      <td><button onclick="delTx('${t.id}')" class="danger">Hapus</button></td>
+    `;
+
+    tbody.appendChild(row);
+  });
+}
+
+// Tambah transaksi
+function addTx() {
+  if (!isMod) return alert("Khusus moderator!");
+
+  const type = txType.value;
+  const amount = parseInt(txAmount.value);
+  const member = txMember.value;
+  const date = txDate.value;
+  const note = txNote.value.trim();
+
+  if (!amount || !date) return alert("Isi jumlah dan tanggal!");
+
+  txs.push({
+    id: "t" + Date.now(),
+    t: Date.now(),
+    type,
+    amount,
+    member,
+    date, // Simpan tanggal dari input
+    note
+  });
+
+  save();
+  renderTx();
+  renderTotalAll();
+  
+  // Reset form
+  txAmount.value = "";
+  txNote.value = "";
+}
+
+document.getElementById("addTxBtn").onclick = addTx;
+
+// Hapus transaksi
+function delTx(id) {
+  if (!isMod) return alert("Khusus moderator!");
+
+  txs = txs.filter(t => t.id !== id);
+  save();
+  renderTx();
+  renderTotalAll();
+}
+
+// -------------------- TOTAL KESELURUHAN ----------------------
+function renderTotalAll() {
+  const totalIn  = txs.filter(x => x.type == "in").reduce((a,b)=>a+b.amount,0);
+  const totalOut = txs.filter(x => x.type == "out").reduce((a,b)=>a+b.amount,0);
+  const saldo = totalIn - totalOut;
+
+  document.getElementById("totalAllBox").innerHTML = `
+    <b>Total Pemasukan:</b> Rp ${totalIn}<br>
+    <b>Total Pengeluaran:</b> Rp ${totalOut}<br>
+    <b>Saldo Akhir:</b> Rp ${saldo}
+  `;
+}
+
+// -------------------- LAPORAN BULANAN ----------------------
+document.getElementById("filterBtn").onclick = () => {
+  const s = filterStart.value;
+  const e = filterEnd.value;
+
+  if (!s || !e) return alert("Isi tanggal!");
+
+  const list = txs.filter(t => t.date >= s && t.date <= e);
+  const totalMasuk = list.filter(x => x.type=="in").reduce((a,b)=>a+b.amount,0);
+  const totalKeluar = list.filter(x => x.type=="out").reduce((a,b)=>a+b.amount,0);
+
+  let bayar = new Set(list.filter(x=>x.type=="in").map(x=>x.member));
+  let belum = members.filter(m => !bayar.has(m.id));
+
+  reportResult.innerHTML = `
+    <b>Total Masuk:</b> Rp ${totalMasuk}<br>
+    <b>Total Keluar:</b> Rp ${totalKeluar}<br>
+    <b>Saldo Periode:</b> Rp ${totalMasuk - totalKeluar}<br><br>
+    <b>Belum Bayar:</b><br>
+    ${belum.length ? belum.map(x => "- " + x.name).join("<br>") : "Semua sudah bayar"}
+  `;
+};
+
+// -------------------- START ----------------------
+renderMembers();
+renderTx();
+renderTotalAll();
+updateModUI();
+
+</script>
+</body>
+</html>
